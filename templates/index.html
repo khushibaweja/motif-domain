@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Protein Domain Visualization Tool</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+      :root {
+        --primary-color: #4a90e2;
+        --secondary-color: #f39c12;
+        --success-color: #27ae60;
+        --danger-color: #e74c3c;
+        --dark-color: #2c3e50;
+        --light-color: #ecf0f1;
+      }
+
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        padding: 20px 0;
+      }
+
+      .container {
+        max-width: 1200px;
+      }
+
+      .main-card {
+        background: white;
+        border-radius: 15px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+        padding: 30px;
+        margin-bottom: 30px;
+      }
+
+      .header {
+        text-align: center;
+        margin-bottom: 30px;
+      }
+
+      .header h1 {
+        color: var(--primary-color);
+        font-weight: bold;
+        margin-bottom: 10px;
+      }
+
+      .header .dna-icon {
+        font-size: 3rem;
+        color: var(--secondary-color);
+      }
+
+      .input-section {
+        background: var(--light-color);
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+
+      .btn-custom {
+        background: var(--primary-color);
+        color: white;
+        border: none;
+        padding: 12px 30px;
+        border-radius: 5px;
+        font-weight: bold;
+        transition: all 0.3s;
+      }
+
+      .btn-custom:hover {
+        background: #357abd;
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+      }
+
+      .nav-pills .nav-link {
+        color: var(--dark-color);
+        font-weight: 500;
+      }
+
+      .nav-pills .nav-link.active {
+        background-color: var(--primary-color);
+      }
+
+      .results-section {
+        display: none;
+        animation: fadeIn 0.5s;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .feature-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 15px;
+        text-align: center;
+      }
+
+      .feature-card h3 {
+        font-size: 2rem;
+        margin-bottom: 5px;
+      }
+
+      .feature-card p {
+        margin: 0;
+        font-size: 0.9rem;
+      }
+
+      .annotation-item {
+        background: white;
+        border-left: 4px solid var(--primary-color);
+        padding: 15px;
+        margin-bottom: 10px;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+      }
+
+      .annotation-item h5 {
+        color: var(--primary-color);
+        margin-bottom: 5px;
+      }
+
+      .loading {
+        display: none;
+        text-align: center;
+        padding: 40px;
+      }
+
+      .loading.active {
+        display: block;
+      }
+
+      .spinner {
+        border: 4px solid var(--light-color);
+        border-top: 4px solid var(--primary-color);
+        border-radius: 50%;
+        width: 50px;
+        height: 50px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 20px;
+      }
+
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+
+      .alert-custom {
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 20px;
+      }
+
+      .visualization-container {
+        background: white;
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      }
+
+      .static-viz-img {
+        width: 100%;
+        border-radius: 5px;
+      }
+
+      textarea {
+        font-family: "Courier New", monospace;
+      }
+
+      .badge-custom {
+        padding: 5px 10px;
+        border-radius: 5px;
+        font-size: 0.85rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="main-card">
+        <div class="header">
+          <i class="fas fa-dna dna-icon"></i>
+          <h1>🧬 Protein Domain Visualization Tool</h1>
+          <p class="text-muted">
+            Analyze protein sequences and visualize domains/motifs
+          </p>
+        </div>
+
+        <div class="input-section">
+          <ul class="nav nav-pills mb-3" id="pills-tab" role="tablist">
+            <li class="nav-item" role="presentation">
+              <button
+                class="nav-link active"
+                id="pills-manual-tab"
+                data-bs-toggle="pill"
+                data-bs-target="#pills-manual"
+                type="button"
+                role="tab"
+              >
+                <i class="fas fa-keyboard"></i> Manual Entry
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button
+                class="nav-link"
+                id="pills-accession-tab"
+                data-bs-toggle="pill"
+                data-bs-target="#pills-accession"
+                type="button"
+                role="tab"
+              >
+                <i class="fas fa-search"></i> NCBI Accession
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button
+                class="nav-link"
+                id="pills-file-tab"
+                data-bs-toggle="pill"
+                data-bs-target="#pills-file"
+                type="button"
+                role="tab"
+              >
+                <i class="fas fa-file-upload"></i> Upload FASTA
+              </button>
+            </li>
+          </ul>
+
+          <div class="tab-content" id="pills-tabContent">
+            <!-- Manual Entry Tab -->
+            <div
+              class="tab-pane fade show active"
+              id="pills-manual"
+              role="tabpanel"
+            >
+              <form id="manualForm">
+                <div class="mb-3">
+                  <label class="form-label">Sequence Type</label>
+                  <select class="form-select" id="seqType" required>
+                    <option value="protein">Protein (Amino Acids)</option>
+                    <option value="dna">DNA (Nucleotides)</option>
+                  </select>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">Sequence</label>
+                  <textarea
+                    class="form-control"
+                    id="sequence"
+                    rows="5"
+                    placeholder="Enter sequence (e.g., MGHHHHHHSSGVDLGTENLYFQSQ)"
+                    required
+                  ></textarea>
+                  <small class="form-text text-muted">
+                    Protein: Use one-letter amino acid codes
+                    (ACDEFGHIKLMNPQRSTVWY)<br />
+                    DNA: Use nucleotide bases (ACGTN)
+                  </small>
+                </div>
+                <button type="submit" class="btn btn-custom">
+                  <i class="fas fa-play"></i> Analyze Sequence
+                </button>
+              </form>
+            </div>
+
+            <!-- Accession Tab -->
+            <div class="tab-pane fade" id="pills-accession" role="tabpanel">
+              <form id="accessionForm">
+                <div class="mb-3">
+                  <label class="form-label">NCBI Accession Number</label>
+                  <input
+                    type="text"
+                    class="form-control"
+                    id="accession"
+                    placeholder="e.g., NP_000508.1 or NM_000517.6"
+                    required
+                  />
+                  <small class="form-text text-muted">
+                    Supports protein (NP_, P) and nucleotide (NM_, NC_, NG_)
+                    accessions. Long sequences (>1000 aa) use faster Pfam-only
+                    analysis.
+                  </small>
+                </div>
+                <div
+                  id="seqLengthInfo"
+                  class="alert alert-info"
+                  style="display: none"
+                >
+                  <strong>Sequence Info:</strong>
+                  <div id="seqInfoContent"></div>
+                </div>
+                <button type="submit" class="btn btn-custom">
+                  <i class="fas fa-download"></i> Fetch & Analyze
+                </button>
+              </form>
+            </div>
+
+            <!-- File Upload Tab -->
+            <div class="tab-pane fade" id="pills-file" role="tabpanel">
+              <form id="fileForm">
+                <div class="mb-3">
+                  <label class="form-label">Upload FASTA File</label>
+                  <input
+                    type="file"
+                    class="form-control"
+                    id="fastaFile"
+                    accept=".fasta,.fa,.fna,.txt"
+                    required
+                  />
+                  <small class="form-text text-muted">
+                    Supported formats: .fasta, .fa, .fna, .txt (Max 16MB)
+                  </small>
+                </div>
+                <button type="submit" class="btn btn-custom">
+                  <i class="fas fa-upload"></i> Upload & Analyze
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- Loading Section -->
+        <div class="loading" id="loading">
+          <div class="spinner"></div>
+          <h4>Analyzing your sequence with real protein databases...</h4>
+          <p class="text-muted" id="loadingMessage">
+            Using InterPro/Pfam API - This may take 30-120 seconds
+          </p>
+          <p class="text-muted">
+            <small id="loadingDetails"
+              >Please be patient while we search for domains and motifs</small
+            >
+          </p>
+        </div>
+
+        <!-- Error Alert -->
+        <div
+          class="alert alert-danger alert-custom"
+          id="errorAlert"
+          style="display: none"
+        >
+          <strong><i class="fas fa-exclamation-triangle"></i> Error:</strong>
+          <span id="errorMessage"></span>
+        </div>
+
+        <!-- Warning Alert -->
+        <div
+          class="alert alert-info alert-custom"
+          id="warningAlert"
+          style="display: none"
+        >
+          <strong><i class="fas fa-info-circle"></i> Info:</strong>
+          This analysis uses real InterProScan API data from EBI servers.
+          Domains and motifs are fetched from live protein databases.
+        </div>
+
+        <!-- Results Section -->
+        <div class="results-section" id="results">
+          <h3 class="mb-3">
+            <i class="fas fa-chart-line"></i> Analysis Results
+          </h3>
+
+          <!-- Sequence Info -->
+          <div class="alert alert-info alert-custom">
+            <strong>Sequence ID:</strong> <span id="seqId"></span><br />
+            <strong>Description:</strong> <span id="seqDesc"></span><br />
+            <strong>Length:</strong> <span id="seqLength"></span> amino acids
+          </div>
+
+          <!-- Feature Statistics -->
+          <h4 class="mt-4 mb-3">Protein Features</h4>
+          <div class="row" id="featuresGrid">
+            <!-- Features will be populated here -->
+          </div>
+
+          <!-- Notes -->
+          <div id="notesSection" style="display: none">
+            <h5 class="mt-3">Additional Notes:</h5>
+            <ul id="notesList"></ul>
+          </div>
+
+          <!-- Domains and Motifs -->
+          <h4 class="mt-4 mb-3">Detected Domains & Motifs</h4>
+          <div id="annotationsList">
+            <!-- Annotations will be populated here -->
+          </div>
+
+          <!-- Visualizations -->
+          <h4 class="mt-4 mb-3">Visualizations</h4>
+
+          <!-- Static Visualization -->
+          <div class="visualization-container">
+            <h5><i class="fas fa-image"></i> Static Visualization</h5>
+            <img
+              id="staticViz"
+              class="static-viz-img"
+              alt="Domain Visualization"
+            />
+          </div>
+
+          <!-- Interactive Visualization -->
+          <div class="visualization-container">
+            <h5><i class="fas fa-chart-bar"></i> Interactive Visualization</h5>
+            <div id="interactiveViz"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+      // Form submissions
+      document
+        .getElementById("manualForm")
+        .addEventListener("submit", function (e) {
+          e.preventDefault();
+          const formData = new FormData();
+          formData.append("input_type", "manual");
+          formData.append(
+            "sequence",
+            document.getElementById("sequence").value
+          );
+          formData.append("seq_type", document.getElementById("seqType").value);
+          submitAnalysis(formData);
+        });
+
+      document
+        .getElementById("accessionForm")
+        .addEventListener("submit", function (e) {
+          e.preventDefault();
+          const formData = new FormData();
+          formData.append("input_type", "accession");
+          formData.append(
+            "accession",
+            document.getElementById("accession").value
+          );
+          submitAnalysis(formData);
+        });
+
+      document
+        .getElementById("fileForm")
+        .addEventListener("submit", function (e) {
+          e.preventDefault();
+          const formData = new FormData();
+          formData.append("input_type", "file");
+          formData.append(
+            "file",
+            document.getElementById("fastaFile").files[0]
+          );
+          submitAnalysis(formData);
+        });
+
+      function submitAnalysis(formData) {
+        // Hide previous results and errors
+        document.getElementById("results").style.display = "none";
+        document.getElementById("errorAlert").style.display = "none";
+        document.getElementById("warningAlert").style.display = "none";
+        document.getElementById("loading").classList.add("active");
+
+        // Local analysis is instant - just show quick message
+        document.getElementById("loadingMessage").textContent =
+          "Analyzing protein domains and motifs...";
+        document.getElementById("loadingDetails").textContent =
+          "Scanning for biological patterns in sequence...";
+
+        // HMMER is fast - 5 minute timeout is enough
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 300000);
+
+        fetch("/analyze", {
+          method: "POST",
+          body: formData,
+          signal: controller.signal,
+        })
+          .then((response) => {
+            clearTimeout(timeoutId);
+            return response.json();
+          })
+          .then((data) => {
+            document.getElementById("loading").classList.remove("active");
+
+            if (data.error) {
+              // Handle both string errors and object errors with hints/details
+              if (typeof data.error === "object") {
+                let errorMsg = data.error.message || data.error;
+                let details = data.error.hint || data.error.details;
+                showError(errorMsg, details);
+              } else {
+                showError(data.error);
+              }
+            } else {
+              displayResults(data);
+            }
+          })
+          .catch((error) => {
+            clearTimeout(timeoutId);
+            document.getElementById("loading").classList.remove("active");
+
+            if (error.name === "AbortError") {
+              showError(
+                "Analysis timeout. InterProScan is a comprehensive database search that can take time for long or complex sequences. Try again or contact support if the issue persists."
+              );
+            } else {
+              showError(
+                "Network error: " +
+                  error.message +
+                  ". Make sure the server is running and try again."
+              );
+            }
+          });
+      }
+
+      function showError(message, hint) {
+        let errorText = message;
+        if (hint) {
+          errorText += `<br><small style="margin-top: 8px; display: block; color: #ccc;">${hint}</small>`;
+        }
+        document.getElementById("errorMessage").innerHTML = errorText;
+        document.getElementById("errorAlert").style.display = "block";
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+
+      function displayResults(data) {
+        // Show warning
+        document.getElementById("warningAlert").style.display = "block";
+
+        // Populate sequence info
+        document.getElementById("seqId").textContent = data.sequence_id;
+        document.getElementById("seqDesc").textContent =
+          data.sequence_description;
+        document.getElementById("seqLength").textContent = data.sequence_length;
+
+        // Populate features
+        const featuresGrid = document.getElementById("featuresGrid");
+        featuresGrid.innerHTML = `
+                <div class="col-md-3">
+                    <div class="feature-card">
+                        <h3>${data.features.length}</h3>
+                        <p>Total Amino Acids</p>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="feature-card">
+                        <h3>${data.features.charged_percent}%</h3>
+                        <p>Charged Residues</p>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="feature-card">
+                        <h3>${data.features.hydrophobic_percent}%</h3>
+                        <p>Hydrophobic</p>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="feature-card">
+                        <h3>${Math.round(data.features.molecular_weight)}</h3>
+                        <p>MW (Da)</p>
+                    </div>
+                </div>
+            `;
+
+        // Show notes if any
+        if (data.features.notes && data.features.notes.length > 0) {
+          const notesList = document.getElementById("notesList");
+          notesList.innerHTML = data.features.notes
+            .map((note) => `<li>${note}</li>`)
+            .join("");
+          document.getElementById("notesSection").style.display = "block";
+        } else {
+          document.getElementById("notesSection").style.display = "none";
+        }
+
+        // Populate annotations
+        const annotationsList = document.getElementById("annotationsList");
+        if (data.annotations && data.annotations.length > 0) {
+          annotationsList.innerHTML = data.annotations
+            .map(
+              (ann) => `
+                    <div class="annotation-item">
+                        <h5>${ann.name}</h5>
+                        <p><strong>Type:</strong> <span class="badge bg-primary badge-custom">${ann.type}</span></p>
+                        <p><strong>Position:</strong> ${ann.start} - ${ann.end} (${ann.end - ann.start} aa)</p>
+                        <p><strong>Source:</strong> ${ann.db}</p>
+                    </div>
+                `
+            )
+            .join("");
+        } else {
+          annotationsList.innerHTML =
+            '<p class="text-muted">No domains or motifs detected.</p>';
+        }
+
+        // Update warning message with actual result
+        const warningAlert = document.getElementById("warningAlert");
+        warningAlert.className =
+          data.annotations && data.annotations.length > 0
+            ? "alert alert-success alert-custom"
+            : "alert alert-info alert-custom";
+        warningAlert.innerHTML = `<strong><i class="fas fa-info-circle"></i> Note:</strong> ${data.warning}`;
+
+        // Display visualizations only if we have annotations
+        if (
+          data.static_visualization &&
+          data.annotations &&
+          data.annotations.length > 0
+        ) {
+          document.getElementById("staticViz").src =
+            "data:image/png;base64," + data.static_visualization;
+          document.querySelector(".visualization-container").style.display =
+            "block";
+        } else {
+          document.querySelector(".visualization-container").style.display =
+            "none";
+        }
+
+        // Display interactive visualization
+        if (
+          data.interactive_visualization &&
+          data.annotations &&
+          data.annotations.length > 0
+        ) {
+          const plotData = JSON.parse(data.interactive_visualization);
+          Plotly.newPlot("interactiveViz", plotData.data, plotData.layout);
+          document.querySelectorAll(
+            ".visualization-container"
+          )[1].style.display = "block";
+        } else {
+          document.querySelectorAll(
+            ".visualization-container"
+          )[1].style.display = "none";
+        }
+
+        // Show results
+        document.getElementById("results").style.display = "block";
+        window.scrollTo({
+          top: document.getElementById("results").offsetTop - 20,
+          behavior: "smooth",
+        });
+      }
+    </script>
+  </body>
+</html>

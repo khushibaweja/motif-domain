@@ -1,144 +1,84 @@
-# Protein Domain Visualization Tool
+# 🧬 Protein Domain & Motif Analyzer
 
-## Overview
+A web application for analyzing protein sequences to identify domains, motifs, and physicochemical properties with comprehensive visualizations.
 
-This tool analyzes protein sequences and visualizes domains/motifs with both static and interactive plots. Available as both a **command-line tool** and a **web application**.
+![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
+![Flask](https://img.shields.io/badge/Flask-2.0+-green.svg)
+![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-## Features
+## 🌟 Features
 
-- 📁 Upload FASTA files (protein or nucleotide)
-- 🔍 Fetch sequences by NCBI accession number
-- ✍️ Manual sequence entry
-- 📊 Generate static and interactive visualizations
-- 🧬 Basic protein feature analysis
-- 🌐 Modern web interface with Bootstrap UI
-- 📱 Responsive design for mobile devices
+- **NCBI Integration**: Fetch protein sequences directly using NCBI accession numbers
+- **Domain Detection**: Identify protein domains and motifs using pattern-based analysis
+- **Comprehensive Visualization Dashboard**:
+  - Protein Info Box (ID, Length, MW, pI, Cys count)
+  - Amino Acid Class Distribution (Pie Chart)
+  - Physicochemical Property Distribution (Bar Chart)
+  - Domain Architecture Diagram
+  - Kyte-Doolittle Hydropathy Plot
+  - Individual Amino Acid Composition
+- **Multiple Input Methods**: NCBI Accession, Manual Sequence, FASTA File Upload
 
-## Quick Start
+## 🚀 Deploy to Vercel
 
-### Web Application (Recommended)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/khushibaweja/motif-domain)
 
-1. Install dependencies:
+### Quick Deploy Steps:
+1. Click the button above OR go to [vercel.com](https://vercel.com)
+2. Import this GitHub repository
+3. Vercel will auto-detect Python and deploy
+4. Your app will be live at `https://motif-domain.vercel.app`
 
-```bash
-pip install -r requirements-web.txt
-```
-
-2. Set environment variable:
-
-```bash
-# Windows PowerShell
-$env:NCBI_EMAIL="your.email@example.com"
-
-# Linux/Mac
-export NCBI_EMAIL="your.email@example.com"
-```
-
-3. Run the web server:
+## 📦 Local Installation
 
 ```bash
+# Clone the repository
+git clone https://github.com/khushibaweja/motif-domain.git
+cd motif-domain
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the application
 python app.py
 ```
 
-4. Open your browser to: http://localhost:5000
+Visit `http://127.0.0.1:5000` in your browser.
 
-### Command-Line Tool
+## 🧪 Test Accession Numbers
 
-### Command-Line Tool
+| Accession | Protein | Source |
+|-----------|---------|--------|
+| `NP_000509` | Hemoglobin beta | NCBI API |
+| `NP_001265724` | Insulin | NCBI API |
+| `NP_000537` | p53 Tumor suppressor | NCBI API |
+| `NG_049326` | Sample protein | Local DB |
+| `NP_000671` | Adrenergic receptor | Local DB |
 
-1. Install required packages:
-
-```bash
-pip install -r requirements.txt
-```
-
-2. Set your NCBI email (optional but recommended):
-
-```bash
-# Windows PowerShell
-$env:NCBI_EMAIL="your.email@example.com"
-
-# Linux/Mac
-export NCBI_EMAIL="your.email@example.com"
-```
-
-3. Run the program:
-
-```bash
-python file1.py
-```
-
-Follow the interactive prompts to analyze sequences.
-
-## Deployment
-
-See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions to:
-
-- Render (Free tier, recommended)
-- Railway
-- Heroku
-- PythonAnywhere
-- Azure App Service
-- Google Cloud Run
-- Vercel
-
-## Important Notes
-
-⚠️ **Mock Data**: Currently uses simulated domain data for demonstration. Real protein domain analysis requires:
-
-- InterProScan API setup
-- Local InterProScan installation
-- Or integration with other bioinformatics tools (Pfam, SMART, etc.)
-
-## Output Files
-
-- `*.png` - Static domain visualization plots
-- `*_interactive.html` - Interactive Plotly visualizations
-
-## Improvements Made
-
-- ✅ Removed hard-coded email addresses
-- ✅ Added environment variable support
-- ✅ Improved error handling throughout
-- ✅ Added visualization options (skip or choose type)
-- ✅ Better input validation
-- ✅ More informative error messages
-- ✅ Enhanced mock data warnings
-- ✅ Created modern web application with Flask
-- ✅ Responsive Bootstrap UI
-- ✅ Interactive Plotly visualizations in browser
-- ✅ Multiple deployment options
-
-## Project Structure
+## 📁 Project Structure
 
 ```
-protein-viz-tool/
-├── app.py                      # Flask web application
-├── file1.py                    # Command-line tool
+motif-domain/
+├── app.py              # Main Flask application
 ├── templates/
-│   └── index.html             # Web UI
-├── static/
-│   └── outputs/               # Generated visualizations
-├── uploads/                    # Uploaded FASTA files
-├── requirements.txt            # CLI dependencies
-├── requirements-web.txt        # Web app dependencies
-├── Procfile                    # Heroku deployment
-├── Dockerfile                  # Docker/Cloud Run deployment
-├── vercel.json                # Vercel deployment
-├── DEPLOYMENT.md              # Deployment guide
-└── README.md                  # This file
+│   └── index.html      # Web interface
+├── static/             # Static files
+├── requirements.txt    # Python dependencies
+├── vercel.json         # Vercel configuration
+└── README.md
 ```
 
-## Future Enhancements
+## 🛠️ Technologies
 
-- [ ] Real InterProScan API integration
-- [ ] Unit tests
-- [ ] Logging framework
-- [ ] Configuration file support
-- [ ] Batch processing mode
-- [ ] Export results to JSON/CSV
-- [ ] Multiple sequence alignment visualization
+- **Backend**: Flask, BioPython
+- **Visualization**: Matplotlib, Plotly
+- **Frontend**: Bootstrap 5
+- **API**: NCBI Entrez E-utilities
+- **Deployment**: Vercel
 
-## License
+## 👤 Author
 
-MIT License
+**Khushi Baweja** - [@khushibaweja](https://github.com/khushibaweja)
+
+---
+Made with ❤️ for bioinformatics

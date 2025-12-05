@@ -769,7 +769,19 @@ MVQELRFDILPDRHEPPQNVEAEEAILGSILLDPEAIGRIADVLS..."
           data.annotations.length > 0
         ) {
           const plotData = JSON.parse(data.interactive_visualization);
-          Plotly.newPlot("interactiveViz", plotData.data, plotData.layout);
+          // Static config - disable all zoom/pan/toolbar
+          const config = {
+            staticPlot: true,
+            displayModeBar: false,
+            scrollZoom: false,
+            doubleClick: false,
+          };
+          Plotly.newPlot(
+            "interactiveViz",
+            plotData.data,
+            plotData.layout,
+            config
+          );
           document.querySelectorAll(
             ".visualization-container"
           )[1].style.display = "block";

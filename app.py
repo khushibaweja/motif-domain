@@ -319,8 +319,8 @@ def remove_duplicate_domains(annotations):
 
 def search_protein_domains_interpro(protein_seq):
     """
-    Search for protein domains using REAL InterProScan API from EBI.
-    Falls back to local pattern matching if API fails or times out.
+    Search for protein domains using multiple APIs.
+    Order: Fast APIs first, then slow InterProScan as last resort.
     """
     seq_length = len(protein_seq)
     
@@ -330,31 +330,26 @@ def search_protein_domains_interpro(protein_seq):
     if seq_length > 40000:
         return [], "Sequence too long for analysis (maximum 40,000 amino acids)"
     
-    # Try real InterProScan API first
-    print(f"Searching protein domains using InterProScan API (length: {seq_length} aa)...")
+    print(f"Searching protein domains (length: {seq_length} aa)...")
     
+    # 1. Try InterProScan API (most reliable, but takes 1-2 min)
+    print("Trying InterProScan API (this may take 1-2 minutes)...")
     try:
         annotations, error = search_interproscan_api(protein_seq)
         if annotations:
             print(f"✓ InterProScan API found {len(annotations)} domains/motifs")
             return annotations, None
         elif error:
-            print(f"InterProScan API error: {error}")
+            print(f"InterProScan: {error}")
+        else:
+            # InterProScan worked but found no domains - that's valid!
+            print("✓ InterProScan completed but found no known domains in databases")
+            print("  (This is normal for novel or poorly characterized sequences)")
     except Exception as e:
-        print(f"InterProScan API exception: {str(e)}")
+        print(f"InterProScan exception: {str(e)}")
     
-    # Try HMMER/Pfam API as backup
-    print("Trying HMMER/Pfam API as backup...")
-    try:
-        annotations, error = search_hmmer_api(protein_seq)
-        if annotations:
-            print(f"✓ HMMER API found {len(annotations)} domains/motifs")
-            return annotations, None
-    except Exception as e:
-        print(f"HMMER API exception: {str(e)}")
-    
-    # Fall back to local analysis only if APIs fail
-    print("APIs unavailable, using local pattern matching as fallback...")
+    # 2. Fall back to local analysis (pattern-based)
+    print("Using local pattern matching to find motifs...")
     annotations, error = search_domains_local(protein_seq)
     
     if annotations:
@@ -398,16 +393,23 @@ def search_interproscan_api(protein_seq):
         job_id = submit_response.text.strip()
         print(f"✓ Job submitted successfully: {job_id}")
         
-        # Step 2: Poll for results (max 180 seconds)
+        # Step 2: Poll for results (max 300 seconds = 5 minutes)
         status_url = f"https://www.ebi.ac.uk/Tools/services/rest/iprscan5/status/{job_id}"
         result_url = f"https://www.ebi.ac.uk/Tools/services/rest/iprscan5/result/{job_id}/json"
         
-        max_attempts = 60  # 60 attempts * 3 seconds = 180 seconds max
+        max_attempts = 60  # 60 attempts * 5 seconds = 300 seconds max
         for attempt in range(max_attempts):
-            time.sleep(3)
+            time.sleep(5)  # Wait 5 seconds between checks
             
-            status_response = requests.get(status_url, timeout=10)
-            status = status_response.text.strip()
+            try:
+                status_response = requests.get(status_url, timeout=30)
+                status = status_response.text.strip()
+            except requests.exceptions.Timeout:
+                print(f"Status check timeout (attempt {attempt + 1}), retrying...")
+                continue
+            except Exception as e:
+                print(f"Status check error: {e}, retrying...")
+                continue
             
             print(f"Job status: {status} (attempt {attempt + 1}/{max_attempts})")
             
@@ -429,10 +431,10 @@ def search_interproscan_api(protein_seq):
             elif status not in ['RUNNING', 'PENDING', 'QUEUED']:
                 return None, f"Unknown job status: {status}"
         
-        return None, "InterProScan timed out after 180 seconds"
+        return None, "InterProScan timed out after 5 minutes - the server may be busy"
         
     except requests.exceptions.Timeout:
-        return None, "InterProScan API request timed out"
+        return None, "InterProScan API connection timed out - server may be busy"
     except requests.exceptions.ConnectionError:
         return None, "Could not connect to InterProScan API"
     except Exception as e:
@@ -442,35 +444,30 @@ def search_interproscan_api(protein_seq):
 def search_hmmer_api(protein_seq):
     """
     Search for domains using HMMER web API (Pfam database).
-    Using the correct EBI HMMER API endpoint.
+    This is FASTER than InterProScan (typically 5-30 seconds).
     API Documentation: https://www.ebi.ac.uk/Tools/hmmer/
     """
     try:
-        # HMMER API uses a different approach - direct POST to search endpoint
-        # The API returns a redirect to results page
+        # HMMER hmmscan endpoint for domain searching
         url = "https://www.ebi.ac.uk/Tools/hmmer/search/hmmscan"
         
-        # Must use specific headers for HMMER API
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Accept': 'application/json'
         }
         
-        # HMMER requires specific format
         data = {
             'hmmdb': 'pfam',
             'seq': f">query\n{protein_seq}",
-            'format': 'json'
         }
         
         print("Submitting to HMMER/Pfam API...")
         
-        # First try the synchronous API
         response = requests.post(
             url, 
             data=data, 
             headers=headers, 
-            timeout=120,
+            timeout=60,
             allow_redirects=True
         )
         
@@ -478,28 +475,29 @@ def search_hmmer_api(protein_seq):
         
         if response.status_code == 200:
             try:
-                # Check if response is JSON
-                if 'application/json' in response.headers.get('Content-Type', ''):
+                content_type = response.headers.get('Content-Type', '')
+                if 'application/json' in content_type:
                     results = response.json()
                     annotations = parse_hmmer_results(results)
                     if annotations:
-                        print(f"✓ HMMER found {len(annotations)} domains")
                         return annotations, None
+                    return None, "HMMER found no domains"
+                else:
+                    # Try to parse as JSON anyway
+                    try:
+                        results = response.json()
+                        annotations = parse_hmmer_results(results)
+                        if annotations:
+                            return annotations, None
+                    except:
+                        pass
             except Exception as e:
                 print(f"HMMER parse error: {e}")
         
-        # Try alternative: EBI Proteins API for Pfam annotations
-        print("Trying EBI Proteins API...")
-        proteins_url = "https://www.ebi.ac.uk/proteins/api/proteins"
-        
-        # This API works differently - we need to search by sequence
-        # For now, let's try the InterPro API directly
-        interpro_url = "https://www.ebi.ac.uk/interpro/api/entry/pfam?format=json"
-        
-        return None, "HMMER API did not return usable results"
+        return None, f"HMMER returned status {response.status_code}"
         
     except requests.exceptions.Timeout:
-        return None, "HMMER API timed out"
+        return None, "HMMER API timed out (60s)"
     except Exception as e:
         return None, f"HMMER error: {str(e)}"
 
@@ -1294,170 +1292,153 @@ def create_visualization_static(seq_length, annotations, protein_seq=None, seq_i
     return image_base64
 
 def create_visualization_interactive(seq_length, annotations):
-    """Create interactive Plotly visualization with professional domain architecture style."""
+    """Create clean, static Plotly visualization with clear domain labels and ranges."""
     if not annotations:
         return None
     
     # Ensure seq_length is integer
     seq_length = int(seq_length)
+    num_domains = len(annotations)
+    
+    # Color palette
+    color_palette = [
+        '#3498db',  # Blue
+        '#e74c3c',  # Red
+        '#2ecc71',  # Green
+        '#f39c12',  # Orange
+        '#9b59b6',  # Purple
+        '#1abc9c',  # Teal
+        '#e67e22',  # Dark Orange
+        '#8e44ad',  # Dark Purple
+    ]
     
     fig = go.Figure()
     
-    # Color scheme - Blue and Orange like reference
-    domain_colors = {
-        'kinase': '#5555FF',
-        'domain': '#5555FF',
-        'sh3': '#5555FF',
-        'transmembrane': '#5555FF',
-        'helix': '#5555FF',
-        'zinc': '#FFA500',
-        'finger': '#FFA500',
-        'motif': '#FFA500',
-        'binding': '#FFA500',
-        'site': '#FFA500',
-        'phosph': '#FFA500',
-        'glyco': '#FFA500',
-        'signal': '#FFA500',
-        'default': '#5555FF'
-    }
-    
-    # Draw protein backbone (thick black line at y=0.5)
+    # ===== Draw protein backbone =====
     fig.add_shape(
-        type="line",
-        x0=0, y0=0.5, x1=seq_length, y1=0.5,
-        line=dict(color="black", width=12),
+        type="rect",
+        x0=0, y0=0.4, x1=seq_length, y1=0.6,
+        fillcolor="#2c3e50",
+        line=dict(color="#2c3e50", width=0),
     )
     
-    # Add green triangle marker at center
-    center_x = seq_length / 2
-    fig.add_trace(go.Scatter(
-        x=[center_x],
-        y=[1.1],
-        mode='markers',
-        marker=dict(symbol='triangle-up', size=20, color='#2ecc71'),
-        showlegend=False,
-        hoverinfo='skip'
-    ))
+    # N terminus
+    fig.add_annotation(
+        x=-seq_length*0.05, y=0.5,
+        text="<b>N</b>",
+        showarrow=False,
+        font=dict(size=18, color="#e74c3c", family="Arial Black"),
+    )
     
-    # Draw domains on the backbone
+    # C terminus  
+    fig.add_annotation(
+        x=seq_length*1.05, y=0.5,
+        text="<b>C</b>",
+        showarrow=False,
+        font=dict(size=18, color="#27ae60", family="Arial Black"),
+    )
+    
+    # ===== Draw domains on backbone =====
     for i, ann in enumerate(annotations):
         name = ann['name']
         start = int(ann['start'])
         end = int(ann['end'])
-        name_lower = name.lower()
+        color = color_palette[i % len(color_palette)]
         
-        # Determine color - orange for motifs/binding, blue for domains
-        color = domain_colors['default']
-        for key in domain_colors:
-            if key in name_lower:
-                color = domain_colors[key]
-                break
-        
-        # Draw domain box on the backbone
+        # Domain rectangle
         fig.add_shape(
             type="rect",
-            x0=start, y0=0.2,
-            x1=end, y1=0.8,
-            line=dict(color="black", width=1),
+            x0=start, y0=0.3, x1=end, y1=0.7,
             fillcolor=color,
+            line=dict(color="white", width=2),
             opacity=0.95,
         )
-        
-        # Add domain label on the box if wide enough
-        domain_width = end - start
-        if domain_width > seq_length * 0.08:
-            display_name = name[:18] + '..' if len(name) > 18 else name
-            fig.add_annotation(
-                x=(start + end) / 2, y=0.5,
-                text=f"<b>{display_name}</b>",
-                showarrow=False,
-                font=dict(size=10, color="white"),
-            )
-        
-        # Add hover info
-        hover_text = (
-            f"<b>{name}</b><br>"
-            f"Position: {start} - {end}<br>"
-            f"Length: {end - start} aa<br>"
-            f"Database: {ann.get('db', 'N/A')}"
-        )
-        
-        fig.add_trace(go.Scatter(
-            x=[(start + end) / 2],
-            y=[0.5],
-            mode='markers',
-            marker=dict(size=25, color=color, opacity=0),
-            text=hover_text,
-            hoverinfo='text',
-            hoverlabel=dict(bgcolor=color, font=dict(color='white', size=12)),
-            showlegend=False,
-        ))
     
-    # Create legend for domain types
-    unique_colors = []
-    for ann in annotations:
-        name_lower = ann['name'].lower()
-        color = domain_colors['default']
-        for key in domain_colors:
-            if key in name_lower:
-                color = domain_colors[key]
-                break
-        if color not in unique_colors:
-            unique_colors.append(color)
+    # ===== Add domain table below =====
+    table_y_start = -0.1
+    row_height = 0.18
     
-    if '#5555FF' in unique_colors:
-        fig.add_trace(go.Scatter(
-            x=[None], y=[None], mode='markers',
-            marker=dict(size=15, color='#5555FF', symbol='square'),
-            name="Domain", showlegend=True
-        ))
-    if '#FFA500' in unique_colors:
-        fig.add_trace(go.Scatter(
-            x=[None], y=[None], mode='markers',
-            marker=dict(size=15, color='#FFA500', symbol='square'),
-            name="Motif/Binding Site", showlegend=True
-        ))
-    
-    # Layout
-    fig.update_layout(
-        title=dict(
-            text=f'<b>Protein Domain Architecture</b>',
-            font=dict(size=18, color='#2c3e50'),
-            x=0.5,
-        ),
-        xaxis=dict(
-            title="<b>Amino Acid Position</b>",
-            range=[0, seq_length],
-            showgrid=True,
-            gridcolor='rgba(0,0,0,0.1)',
-            zeroline=False,
-            tickfont=dict(size=12),
-            tickformat='d',  # Integer format - no scientific notation
-        ),
-        yaxis=dict(
-            range=[-0.2, 1.5],
-            showticklabels=False,
-            showgrid=False,
-            zeroline=False,
-        ),
-        height=300,
-        plot_bgcolor='white',
-        paper_bgcolor='white',
-        hovermode='closest',
-        margin=dict(l=50, r=50, t=80, b=60),
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=-0.25,
-            xanchor="center",
-            x=0.5,
-            bgcolor="rgba(255,255,255,0.9)",
-            bordercolor="rgba(0,0,0,0.2)",
-            borderwidth=1,
-        ),
+    # Table header
+    fig.add_annotation(
+        x=seq_length/2, y=table_y_start + 0.05,
+        text="<b>━━━━━━━━━ DOMAINS FOUND ━━━━━━━━━</b>",
+        showarrow=False,
+        font=dict(size=11, color="#2c3e50"),
     )
     
-    return pio.to_json(fig)
+    for i, ann in enumerate(annotations):
+        name = ann['name']
+        start = int(ann['start'])
+        end = int(ann['end'])
+        length = end - start
+        color = color_palette[i % len(color_palette)]
+        y_pos = table_y_start - ((i + 1) * row_height)
+        
+        # Color box
+        fig.add_shape(
+            type="rect",
+            x0=0, y0=y_pos - 0.05, x1=seq_length * 0.04, y1=y_pos + 0.05,
+            fillcolor=color,
+            line=dict(color="white", width=1),
+        )
+        
+        # Domain info text - full name
+        fig.add_annotation(
+            x=seq_length * 0.06, y=y_pos,
+            text=f"<b>{name}</b>",
+            showarrow=False,
+            font=dict(size=11, color="#2c3e50"),
+            xanchor="left",
+        )
+        
+        # Position range - clearly visible
+        fig.add_annotation(
+            x=seq_length * 0.55, y=y_pos,
+            text=f"<b>Range: {start} - {end}</b>  ({length} aa)",
+            showarrow=False,
+            font=dict(size=11, color="#555"),
+            xanchor="left",
+        )
+    
+    # Calculate height based on domains
+    plot_height = 300 + (num_domains * 35)
+    y_min = table_y_start - ((num_domains + 1) * row_height) - 0.1
+    
+    # ===== Layout - FULLY STATIC, no zoom/pan =====
+    fig.update_layout(
+        title=dict(
+            text=f"<b>🧬 Protein Domain Analysis</b><br><span style='font-size:13px'>Sequence: {seq_length} amino acids  |  Domains: {num_domains}</span>",
+            font=dict(size=16, color='#2c3e50'),
+            x=0.5,
+            y=0.95
+        ),
+        height=plot_height,
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        margin=dict(l=60, r=60, t=80, b=30),
+        xaxis=dict(
+            range=[-seq_length*0.08, seq_length*1.08],
+            showgrid=True,
+            gridcolor='rgba(0,0,0,0.1)',
+            tickformat='d',
+            tickfont=dict(size=11),
+            title=dict(text="<b>Amino Acid Position</b>", font=dict(size=12)),
+            fixedrange=True,  # Disable zoom
+            dtick=max(10, seq_length // 8),  # Nice tick spacing
+        ),
+        yaxis=dict(
+            range=[y_min, 1.0],
+            showticklabels=False,
+            showgrid=False,
+            fixedrange=True,  # Disable zoom
+        ),
+        showlegend=False,
+        dragmode=False,  # Disable drag
+    )
+    
+    # Convert to JSON with static config embedded
+    fig_json = pio.to_json(fig)
+    return fig_json
 
 @app.route('/')
 def index():

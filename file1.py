@@ -339,8 +339,16 @@ def search_motifs_interproscan(protein_seq):
 def create_ncbi_style_visualization(seq_length, annotations, title="Conserved Domain Visualization"):
     """Create NCBI CDD-style domain visualization."""
     
-    # Use minimum length for better visualization
-    vis_length = max(seq_length, 800)
+    # Ensure seq_length is reasonable (proteins are rarely > 5000 aa)
+    seq_length = int(seq_length)
+    if seq_length > 50000:
+        print(f"Warning: Very long sequence ({seq_length}). Might be nucleotide length?")
+        # If it looks like nucleotide length, divide by 3
+        if seq_length > 100000:
+            seq_length = seq_length // 3
+            print(f"Adjusted to protein length: {seq_length} aa")
+    
+    vis_length = max(seq_length, 100)
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 8), 
                                    gridspec_kw={'height_ratios': [1, 1.5]})
@@ -351,61 +359,51 @@ def create_ncbi_style_visualization(seq_length, annotations, title="Conserved Do
     ax1.set_xlim(0, vis_length)
     ax1.set_ylim(0, 3)
     
-    # Draw sequence line
-    ax1.plot([1, vis_length], [2.0, 2.0], color='black', linewidth=3)
+    # Draw sequence line (black backbone)
+    ax1.plot([0, vis_length], [2.0, 2.0], color='black', linewidth=6)
     
-    # Add position markers
-    tick_interval = max(50, vis_length // 10)
-    for pos in range(0, vis_length + 1, tick_interval):
-        if pos > 0:
-            ax1.plot([pos, pos], [1.9, 2.1], color='gray', linewidth=1)
-            ax1.text(pos, 1.7, str(pos), ha='center', va='top', fontsize=8)
+    # Add green triangle marker at center
+    center_x = vis_length / 2
+    triangle = plt.Polygon([[center_x - vis_length*0.02, 2.5], 
+                           [center_x + vis_length*0.02, 2.5], 
+                           [center_x, 2.8]], 
+                          color='#2ecc71', zorder=10)
+    ax1.add_patch(triangle)
 
-    # Draw domains and motifs
+    # Draw domains and motifs - Blue (#5555FF) and Orange (#FFA500)
     for ann in annotations:
-        start = ann['start']
-        end = ann['end']
+        start = int(ann['start'])
+        end = int(ann['end'])
         width = end - start
         ann_name = ann['name'].lower()
         
-        # Color coding
-        if any(keyword in ann_name for keyword in ['active', 'site', 'catalytic']):
-            color = 'red'
-            height = 0.3
-            y_pos = 2.4
-            # Draw as triangle for active sites
-            poly = patches.Polygon([[start, y_pos], 
-                                   [end, y_pos], 
-                                   [start + width/2, y_pos + height]], 
-                                  facecolor=color, alpha=0.8)
-            ax1.add_patch(poly)
-        elif any(keyword in ann_name for keyword in ['metal', 'binding', 'zinc']):
-            color = 'green'
-            height = 0.3
-            y_pos = 2.4
-            poly = patches.Polygon([[start, y_pos], 
-                                   [end, y_pos], 
-                                   [start + width/2, y_pos + height]], 
-                                  facecolor=color, alpha=0.8)
-            ax1.add_patch(poly)
+        # Color coding - blue for domains, orange for motifs/binding sites
+        if any(keyword in ann_name for keyword in ['motif', 'site', 'zinc', 'finger', 'binding', 'phosph', 'glyco']):
+            color = '#FFA500'  # Orange
         else:
-            # Regular domains
-            color = 'blue' if 'domain' in ann.get('type', '') else 'orange'
-            height = 0.6
-            y_pos = 1.7
-            rect = patches.Rectangle((start, y_pos - height/2), width, height,
-                                   facecolor=color, edgecolor='black', alpha=0.8,
-                                   linewidth=1)
-            ax1.add_patch(rect)
-            
-            # Add label for larger domains
-            if width > vis_length * 0.05:
-                ax1.text(start + width/2, y_pos, ann['name'], 
-                        ha='center', va='center', fontsize=8, fontweight='bold',
-                        bbox=dict(boxstyle="round,pad=0.1", facecolor='white', alpha=0.9))
+            color = '#5555FF'  # Blue
+        
+        # Draw domain box on backbone
+        rect = patches.FancyBboxPatch((start, 1.6), width, 0.8,
+                                     boxstyle="round,pad=0.01",
+                                     facecolor=color, edgecolor='black', 
+                                     linewidth=1.5, zorder=3)
+        ax1.add_patch(rect)
+        
+        # Add label for larger domains
+        if width > vis_length * 0.05:
+            ax1.text(start + width/2, 2.0, ann['name'][:15], 
+                    ha='center', va='center', fontsize=8, fontweight='bold', color='white')
 
+    # Add position markers with proper integer formatting
+    ax1.set_xlabel('Amino Acid Position', fontweight='bold')
+    ax1.xaxis.set_major_locator(plt.MaxNLocator(integer=True, nbins=8))
+    ax1.ticklabel_format(style='plain', axis='x')  # Disable scientific notation
+    ax1.set_yticks([])
+    ax1.spines['top'].set_visible(False)
+    ax1.spines['right'].set_visible(False)
+    ax1.spines['left'].set_visible(False)
     ax1.set_title("Protein Domain Architecture", fontsize=14, fontweight='bold', pad=20)
-    ax1.axis('off')
 
     # --- Bottom panel: Simple features track ---
     ax2.set_xlim(0, vis_length)
@@ -413,30 +411,30 @@ def create_ncbi_style_visualization(seq_length, annotations, title="Conserved Do
     
     for i, ann in enumerate(annotations):
         y_pos = len(annotations) - i
-        start = ann['start']
-        end = ann['end']
+        start = int(ann['start'])
+        end = int(ann['end'])
+        ann_name = ann['name'].lower()
         
-        # Color based on type
-        if any(keyword in ann['name'].lower() for keyword in ['active', 'site']):
-            color = 'red'
-        elif any(keyword in ann['name'].lower() for keyword in ['metal', 'binding']):
-            color = 'green'
-        elif 'domain' in ann.get('type', ''):
-            color = 'blue'
+        # Color based on type - blue for domains, orange for motifs
+        if any(keyword in ann_name for keyword in ['motif', 'site', 'zinc', 'finger', 'binding', 'phosph', 'glyco']):
+            color = '#FFA500'  # Orange
         else:
-            color = 'orange'
+            color = '#5555FF'  # Blue
         
-        rect = patches.Rectangle((start, y_pos - 0.4), end-start, 0.8,
-                               facecolor=color, alpha=0.7, edgecolor='black')
+        rect = patches.FancyBboxPatch((start, y_pos - 0.4), end-start, 0.8,
+                                     boxstyle="round,pad=0.01",
+                                     facecolor=color, alpha=0.9, edgecolor='black')
         ax2.add_patch(rect)
-        ax2.text(start + (end-start)/2, y_pos, ann['name'], 
-                ha='center', va='center', fontsize=8)
+        ax2.text(start + (end-start)/2, y_pos, ann['name'][:20], 
+                ha='center', va='center', fontsize=8, color='white', fontweight='bold')
 
     ax2.set_xlabel('Amino Acid Position', fontweight='bold')
     ax2.set_ylabel('Features', fontweight='bold')
     ax2.set_title('Domain and Motif Features', fontsize=12, fontweight='bold')
     ax2.set_yticks(range(1, len(annotations) + 1))
-    ax2.set_yticklabels([ann['name'] for ann in annotations])
+    ax2.set_yticklabels([ann['name'][:25] for ann in annotations])
+    ax2.xaxis.set_major_locator(plt.MaxNLocator(integer=True, nbins=8))
+    ax2.ticklabel_format(style='plain', axis='x')  # Disable scientific notation
     ax2.grid(axis='x', alpha=0.3)
 
     plt.tight_layout()

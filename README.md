@@ -24,6 +24,7 @@ A web application for analyzing protein sequences to identify domains, motifs, a
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/khushibaweja/motif-domain)
 
 ### Quick Deploy Steps:
+
 1. Click the button above OR go to [vercel.com](https://vercel.com)
 2. Import this GitHub repository
 3. Vercel will auto-detect Python and deploy
@@ -47,13 +48,13 @@ Visit `http://127.0.0.1:5000` in your browser.
 
 ## 🧪 Test Accession Numbers
 
-| Accession | Protein | Source |
-|-----------|---------|--------|
-| `NP_000509` | Hemoglobin beta | NCBI API |
-| `NP_001265724` | Insulin | NCBI API |
-| `NP_000537` | p53 Tumor suppressor | NCBI API |
-| `NG_049326` | Sample protein | Local DB |
-| `NP_000671` | Adrenergic receptor | Local DB |
+| Accession      | Protein              | Source   |
+| -------------- | -------------------- | -------- |
+| `NP_000509`    | Hemoglobin beta      | NCBI API |
+| `NP_001265724` | Insulin              | NCBI API |
+| `NP_000537`    | p53 Tumor suppressor | NCBI API |
+| `NG_049326`    | Sample protein       | Local DB |
+| `NP_000671`    | Adrenergic receptor  | Local DB |
 
 ## 📁 Project Structure
 
@@ -81,4 +82,5 @@ motif-domain/
 **Khushi Baweja** - [@khushibaweja](https://github.com/khushibaweja)
 
 ---
+
 Made with ❤️ for bioinformatics

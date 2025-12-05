@@ -238,6 +238,18 @@
             <li class="nav-item" role="presentation">
               <button
                 class="nav-link"
+                id="pills-pdb-tab"
+                data-bs-toggle="pill"
+                data-bs-target="#pills-pdb"
+                type="button"
+                role="tab"
+              >
+                <i class="fas fa-cube"></i> PDB ID
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button
+                class="nav-link"
                 id="pills-file-tab"
                 data-bs-toggle="pill"
                 data-bs-target="#pills-file"
@@ -260,23 +272,44 @@
                 <div class="mb-3">
                   <label class="form-label">Sequence Type</label>
                   <select class="form-select" id="seqType" required>
-                    <option value="protein">Protein (Amino Acids)</option>
-                    <option value="dna">DNA (Nucleotides)</option>
+                    <option value="protein">
+                      Protein Sequence (Amino Acids)
+                    </option>
+                    <option value="dna">DNA/Nucleotide Sequence</option>
                   </select>
                 </div>
                 <div class="mb-3">
-                  <label class="form-label">Sequence</label>
+                  <label class="form-label"
+                    >Sequence (FASTA format supported)</label
+                  >
                   <textarea
                     class="form-control"
                     id="sequence"
-                    rows="5"
-                    placeholder="Enter sequence (e.g., MGHHHHHHSSGVDLGTENLYFQSQ)"
+                    rows="8"
+                    placeholder=">ABB57355.1 primary replicative DNA helicase [Synechococcus elongatus]
+MVQELRFDILPDRHEPPQNVEAEEAILGSILLDPEAIGRIADVLSPEAFYNSNHRDIYRAA
+VQLHSQGQPTDLTSLTTSLQDAGQLDKVGGQSRLAKLVDRVVTTANVEQYAQLVIDKF
+LRRQLIQAGNSVIQLGYDTTKPLEAVLDQAEQKVFGITQERPTMGLLPAAEILTSTFAEIE
+SRSMGTALSGISCNYYDLDAMTQGFQRSDLIIVAGRPAMGKTSIVLNIARNITVAHKLPV
+
+Or just paste the sequence without header:
+MVQELRFDILPDRHEPPQNVEAEEAILGSILLDPEAIGRIADVLS..."
                     required
                   ></textarea>
                   <small class="form-text text-muted">
-                    Protein: Use one-letter amino acid codes
-                    (ACDEFGHIKLMNPQRSTVWY)<br />
-                    DNA: Use nucleotide bases (ACGTN)
+                    <strong>FASTA Format:</strong> Start with
+                    <code>&gt;ID description</code> followed by sequence on new
+                    lines<br />
+                    <strong>Protein:</strong> Use one-letter amino acid codes
+                    (A, C, D, E, F, G, H, I, K, L, M, N, P, Q, R, S, T, V, W,
+                    Y)<br />
+                    <strong>DNA:</strong> Use nucleotide codes (A, C, G, T, N) -
+                    will be translated to protein<br />
+                    <em
+                      ><i class="fas fa-lightbulb"></i> Tip: Copy sequences
+                      directly from NCBI, UniProt, or publications - headers are
+                      automatically parsed!</em
+                    >
                   </small>
                 </div>
                 <button type="submit" class="btn btn-custom">
@@ -317,6 +350,37 @@
               </form>
             </div>
 
+            <!-- PDB Tab -->
+            <div class="tab-pane fade" id="pills-pdb" role="tabpanel">
+              <form id="pdbForm">
+                <div class="mb-3">
+                  <label class="form-label">PDB ID (Protein Data Bank)</label>
+                  <input
+                    type="text"
+                    class="form-control"
+                    id="pdbId"
+                    placeholder="e.g., 1HHB, 4HHB, 1TIM_A"
+                    required
+                  />
+                  <small class="form-text text-muted">
+                    Enter a 4-character PDB ID (e.g., 1HHB for Hemoglobin, 4HHB,
+                    1TIM).<br />
+                    <strong>Tip:</strong> Add chain ID with underscore or colon
+                    for specific chain (e.g., 1HHB_A or 1HHB:A)
+                  </small>
+                </div>
+                <div class="alert alert-info">
+                  <i class="fas fa-info-circle"></i>
+                  <strong>PDB (Protein Data Bank)</strong> contains 3D
+                  structures of proteins. This tool fetches the amino acid
+                  sequence from the structure and analyzes its domains.
+                </div>
+                <button type="submit" class="btn btn-custom">
+                  <i class="fas fa-cube"></i> Fetch from PDB & Analyze
+                </button>
+              </form>
+            </div>
+
             <!-- File Upload Tab -->
             <div class="tab-pane fade" id="pills-file" role="tabpanel">
               <form id="fileForm">
@@ -344,13 +408,33 @@
         <!-- Loading Section -->
         <div class="loading" id="loading">
           <div class="spinner"></div>
-          <h4>Analyzing your sequence with real protein databases...</h4>
+          <h4 id="loadingTitle">
+            Analyzing your sequence with real protein databases...
+          </h4>
           <p class="text-muted" id="loadingMessage">
-            Using InterPro/Pfam API - This may take 30-120 seconds
+            Connecting to InterProScan API at EBI (European Bioinformatics
+            Institute)
           </p>
           <p class="text-muted">
             <small id="loadingDetails"
-              >Please be patient while we search for domains and motifs</small
+              >This uses real APIs: InterProScan → HMMER/Pfam → Local patterns
+              (fallback)</small
+            >
+          </p>
+          <div
+            class="progress mt-3"
+            style="height: 8px; max-width: 400px; margin: 0 auto"
+          >
+            <div
+              class="progress-bar progress-bar-striped progress-bar-animated"
+              id="loadingProgress"
+              role="progressbar"
+              style="width: 10%"
+            ></div>
+          </div>
+          <p class="text-muted mt-2">
+            <small id="loadingTime"
+              >Estimated time: 30-120 seconds for API analysis</small
             >
           </p>
         </div>
@@ -460,6 +544,16 @@
         });
 
       document
+        .getElementById("pdbForm")
+        .addEventListener("submit", function (e) {
+          e.preventDefault();
+          const formData = new FormData();
+          formData.append("input_type", "pdb");
+          formData.append("pdb_id", document.getElementById("pdbId").value);
+          submitAnalysis(formData);
+        });
+
+      document
         .getElementById("fileForm")
         .addEventListener("submit", function (e) {
           e.preventDefault();
@@ -479,13 +573,43 @@
         document.getElementById("warningAlert").style.display = "none";
         document.getElementById("loading").classList.add("active");
 
-        // Local analysis is instant - just show quick message
+        // Update loading messages for real API
+        document.getElementById("loadingTitle").textContent =
+          "Analyzing your sequence with real protein databases...";
         document.getElementById("loadingMessage").textContent =
-          "Analyzing protein domains and motifs...";
+          "Step 1: Submitting to InterProScan API (EBI)...";
         document.getElementById("loadingDetails").textContent =
-          "Scanning for biological patterns in sequence...";
+          "Using real APIs: InterProScan → HMMER/Pfam → Local patterns (fallback)";
+        document.getElementById("loadingProgress").style.width = "10%";
+        document.getElementById("loadingTime").textContent =
+          "Estimated time: 30-120 seconds for API analysis";
 
-        // HMMER is fast - 5 minute timeout is enough
+        // Progress animation
+        let progress = 10;
+        const progressInterval = setInterval(() => {
+          if (progress < 90) {
+            progress += 2;
+            document.getElementById("loadingProgress").style.width =
+              progress + "%";
+
+            // Update status messages based on progress
+            if (progress > 20 && progress <= 40) {
+              document.getElementById("loadingMessage").textContent =
+                "Step 2: InterProScan job queued, waiting for results...";
+            } else if (progress > 40 && progress <= 60) {
+              document.getElementById("loadingMessage").textContent =
+                "Step 3: Analyzing sequence against Pfam, SMART, ProSite databases...";
+            } else if (progress > 60 && progress <= 80) {
+              document.getElementById("loadingMessage").textContent =
+                "Step 4: Processing domain annotations...";
+            } else if (progress > 80) {
+              document.getElementById("loadingMessage").textContent =
+                "Step 5: Finalizing results and creating visualizations...";
+            }
+          }
+        }, 2000);
+
+        // 5 minute timeout for API calls
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 300000);
 
@@ -496,6 +620,8 @@
         })
           .then((response) => {
             clearTimeout(timeoutId);
+            clearInterval(progressInterval);
+            document.getElementById("loadingProgress").style.width = "100%";
             return response.json();
           })
           .then((data) => {
@@ -516,6 +642,7 @@
           })
           .catch((error) => {
             clearTimeout(timeoutId);
+            clearInterval(progressInterval);
             document.getElementById("loading").classList.remove("active");
 
             if (error.name === "AbortError") {

@@ -18,6 +18,7 @@ from datetime import datetime
 import secrets
 import requests
 import time
+import xml.etree.ElementTree as ET
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(16)
@@ -73,6 +74,103 @@ LOCAL_SEQUENCES = {
 # Create necessary directories
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs('static/outputs', exist_ok=True)
+
+def fetch_sequence_from_pdb(pdb_id):
+    """
+    Fetch protein sequence from PDB (Protein Data Bank) using RCSB PDB REST API.
+    Returns (sequence, description, error)
+    """
+    pdb_id = pdb_id.strip().upper()
+    
+    # Validate PDB ID format (4 characters, alphanumeric)
+    # Can also have chain ID like 1ABC_A or 1ABC:A
+    chain_id = None
+    if '_' in pdb_id:
+        parts = pdb_id.split('_')
+        pdb_id = parts[0]
+        chain_id = parts[1] if len(parts) > 1 else None
+    elif ':' in pdb_id:
+        parts = pdb_id.split(':')
+        pdb_id = parts[0]
+        chain_id = parts[1] if len(parts) > 1 else None
+    
+    if len(pdb_id) != 4:
+        return None, None, f"Invalid PDB ID format. PDB IDs should be 4 characters (e.g., 1ABC, 4HHB). Got: {pdb_id}"
+    
+    try:
+        # Method 1: Use RCSB PDB FASTA endpoint for sequence
+        if chain_id:
+            fasta_url = f"https://www.rcsb.org/fasta/entry/{pdb_id}/display"
+        else:
+            fasta_url = f"https://www.rcsb.org/fasta/entry/{pdb_id}/display"
+        
+        print(f"Fetching sequence from PDB: {pdb_id}" + (f" chain {chain_id}" if chain_id else ""))
+        
+        response = requests.get(fasta_url, timeout=30)
+        response.raise_for_status()
+        
+        fasta_text = response.text.strip()
+        if not fasta_text:
+            return None, None, f"No sequence found for PDB ID: {pdb_id}"
+        
+        # Parse FASTA - may contain multiple chains
+        records = list(SeqIO.parse(io.StringIO(fasta_text), "fasta"))
+        
+        if not records:
+            return None, None, f"Could not parse sequence from PDB for: {pdb_id}"
+        
+        # If chain specified, find that chain
+        if chain_id:
+            for record in records:
+                # Chain ID is usually in the header like ">1ABC_A" or in description
+                if f"_{chain_id}" in record.id or f"Chain {chain_id}" in record.description:
+                    protein_seq = str(record.seq).upper().replace('X', '').replace('*', '')
+                    description = f"PDB:{pdb_id} Chain {chain_id} - {record.description}"
+                    print(f"✓ Found chain {chain_id}: {len(protein_seq)} amino acids")
+                    return protein_seq, description, None
+            # If chain not found, use first record with a warning
+            print(f"Chain {chain_id} not found, using first available chain")
+        
+        # Use first record
+        record = records[0]
+        protein_seq = str(record.seq).upper().replace('X', '').replace('*', '')
+        description = f"PDB:{pdb_id} - {record.description}"
+        
+        print(f"✓ Retrieved from PDB: {len(protein_seq)} amino acids")
+        return protein_seq, description, None
+        
+    except requests.exceptions.Timeout:
+        return None, None, f"PDB request timed out for: {pdb_id}"
+    except requests.exceptions.ConnectionError:
+        return None, None, f"Could not connect to PDB database for: {pdb_id}"
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 404:
+            return None, None, f"PDB ID '{pdb_id}' not found in Protein Data Bank"
+        return None, None, f"PDB API error: HTTP {e.response.status_code}"
+    except Exception as e:
+        print(f"PDB fetch error: {type(e).__name__}: {str(e)}")
+        return None, None, f"Failed to fetch from PDB: {str(e)}"
+
+
+def is_valid_protein_sequence(seq):
+    """
+    Check if a sequence is a valid protein sequence.
+    Accepts standard amino acids plus common modifications.
+    """
+    # Standard amino acids + common modifications
+    valid_chars = set('ACDEFGHIKLMNPQRSTVWY*XU')
+    seq_upper = seq.upper().replace(' ', '').replace('\n', '').replace('\r', '')
+    return all(c in valid_chars for c in seq_upper)
+
+
+def is_valid_dna_sequence(seq):
+    """
+    Check if a sequence is a valid DNA/RNA sequence.
+    """
+    valid_chars = set('ACGTUNRYSWKMBDHV')
+    seq_upper = seq.upper().replace(' ', '').replace('\n', '').replace('\r', '')
+    return all(c in valid_chars for c in seq_upper)
+
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
@@ -221,8 +319,8 @@ def remove_duplicate_domains(annotations):
 
 def search_protein_domains_interpro(protein_seq):
     """
-    Search for protein domains using InterPro API with proper timeout handling.
-    Falls back to local pattern matching if API is slow.
+    Search for protein domains using REAL InterProScan API from EBI.
+    Falls back to local pattern matching if API fails or times out.
     """
     seq_length = len(protein_seq)
     
@@ -232,16 +330,327 @@ def search_protein_domains_interpro(protein_seq):
     if seq_length > 40000:
         return [], "Sequence too long for analysis (maximum 40,000 amino acids)"
     
-    # For web requests, use fast local analysis to ensure response
-    # This gives instant results while being biologically meaningful
-    print(f"Analyzing protein domains locally (length: {seq_length} aa)...")
+    # Try real InterProScan API first
+    print(f"Searching protein domains using InterProScan API (length: {seq_length} aa)...")
+    
+    try:
+        annotations, error = search_interproscan_api(protein_seq)
+        if annotations:
+            print(f"✓ InterProScan API found {len(annotations)} domains/motifs")
+            return annotations, None
+        elif error:
+            print(f"InterProScan API error: {error}")
+    except Exception as e:
+        print(f"InterProScan API exception: {str(e)}")
+    
+    # Try HMMER/Pfam API as backup
+    print("Trying HMMER/Pfam API as backup...")
+    try:
+        annotations, error = search_hmmer_api(protein_seq)
+        if annotations:
+            print(f"✓ HMMER API found {len(annotations)} domains/motifs")
+            return annotations, None
+    except Exception as e:
+        print(f"HMMER API exception: {str(e)}")
+    
+    # Fall back to local analysis only if APIs fail
+    print("APIs unavailable, using local pattern matching as fallback...")
     annotations, error = search_domains_local(protein_seq)
     
     if annotations:
-        print(f"✓ Found {len(annotations)} domains/motifs")
+        print(f"✓ Local analysis found {len(annotations)} domains/motifs")
         return annotations, None
     
     return [], "No domains or motifs detected in this sequence"
+
+
+def search_interproscan_api(protein_seq):
+    """
+    Search for domains using the EBI InterProScan REST API.
+    This is the gold standard for protein domain analysis.
+    API Documentation: https://www.ebi.ac.uk/Tools/services/rest/iprscan5
+    """
+    try:
+        # Step 1: Submit job to InterProScan
+        submit_url = "https://www.ebi.ac.uk/Tools/services/rest/iprscan5/run"
+        
+        # Format sequence as FASTA
+        fasta_seq = f">query_protein\n{protein_seq}"
+        
+        # Valid applications (from API docs - case sensitive!):
+        # PfamA, SMART, SuperFamily, Gene3d, Coils, CDD, PrositeProfiles, PrositePatterns, Panther, PRINTS
+        job_data = {
+            'email': NCBI_EMAIL,
+            'sequence': fasta_seq,
+            'stype': 'p',  # protein
+            'appl': 'PfamA,SMART,SuperFamily,Gene3d,CDD,PrositeProfiles,PrositePatterns,Coils',
+            'goterms': 'false',
+            'pathways': 'false'
+        }
+        
+        print("Submitting sequence to InterProScan API...")
+        submit_response = requests.post(submit_url, data=job_data, timeout=30)
+        
+        if submit_response.status_code != 200:
+            print(f"InterProScan response: {submit_response.text[:500]}")
+            return None, f"InterProScan submit failed: HTTP {submit_response.status_code}"
+        
+        job_id = submit_response.text.strip()
+        print(f"✓ Job submitted successfully: {job_id}")
+        
+        # Step 2: Poll for results (max 180 seconds)
+        status_url = f"https://www.ebi.ac.uk/Tools/services/rest/iprscan5/status/{job_id}"
+        result_url = f"https://www.ebi.ac.uk/Tools/services/rest/iprscan5/result/{job_id}/json"
+        
+        max_attempts = 60  # 60 attempts * 3 seconds = 180 seconds max
+        for attempt in range(max_attempts):
+            time.sleep(3)
+            
+            status_response = requests.get(status_url, timeout=10)
+            status = status_response.text.strip()
+            
+            print(f"Job status: {status} (attempt {attempt + 1}/{max_attempts})")
+            
+            if status == 'FINISHED':
+                # Get results
+                print("Fetching results...")
+                result_response = requests.get(result_url, timeout=30)
+                if result_response.status_code == 200:
+                    results = result_response.json()
+                    annotations = parse_interproscan_results(results)
+                    print(f"✓ InterProScan returned {len(annotations)} annotations")
+                    return annotations, None
+                else:
+                    return None, f"Failed to get results: HTTP {result_response.status_code}"
+            
+            elif status == 'FAILURE' or status == 'ERROR':
+                return None, f"InterProScan job failed: {status}"
+            
+            elif status not in ['RUNNING', 'PENDING', 'QUEUED']:
+                return None, f"Unknown job status: {status}"
+        
+        return None, "InterProScan timed out after 180 seconds"
+        
+    except requests.exceptions.Timeout:
+        return None, "InterProScan API request timed out"
+    except requests.exceptions.ConnectionError:
+        return None, "Could not connect to InterProScan API"
+    except Exception as e:
+        return None, f"InterProScan error: {str(e)}"
+
+
+def search_hmmer_api(protein_seq):
+    """
+    Search for domains using HMMER web API (Pfam database).
+    Using the correct EBI HMMER API endpoint.
+    API Documentation: https://www.ebi.ac.uk/Tools/hmmer/
+    """
+    try:
+        # HMMER API uses a different approach - direct POST to search endpoint
+        # The API returns a redirect to results page
+        url = "https://www.ebi.ac.uk/Tools/hmmer/search/hmmscan"
+        
+        # Must use specific headers for HMMER API
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json'
+        }
+        
+        # HMMER requires specific format
+        data = {
+            'hmmdb': 'pfam',
+            'seq': f">query\n{protein_seq}",
+            'format': 'json'
+        }
+        
+        print("Submitting to HMMER/Pfam API...")
+        
+        # First try the synchronous API
+        response = requests.post(
+            url, 
+            data=data, 
+            headers=headers, 
+            timeout=120,
+            allow_redirects=True
+        )
+        
+        print(f"HMMER response status: {response.status_code}")
+        
+        if response.status_code == 200:
+            try:
+                # Check if response is JSON
+                if 'application/json' in response.headers.get('Content-Type', ''):
+                    results = response.json()
+                    annotations = parse_hmmer_results(results)
+                    if annotations:
+                        print(f"✓ HMMER found {len(annotations)} domains")
+                        return annotations, None
+            except Exception as e:
+                print(f"HMMER parse error: {e}")
+        
+        # Try alternative: EBI Proteins API for Pfam annotations
+        print("Trying EBI Proteins API...")
+        proteins_url = "https://www.ebi.ac.uk/proteins/api/proteins"
+        
+        # This API works differently - we need to search by sequence
+        # For now, let's try the InterPro API directly
+        interpro_url = "https://www.ebi.ac.uk/interpro/api/entry/pfam?format=json"
+        
+        return None, "HMMER API did not return usable results"
+        
+    except requests.exceptions.Timeout:
+        return None, "HMMER API timed out"
+    except Exception as e:
+        return None, f"HMMER error: {str(e)}"
+
+
+def parse_interproscan_results(results):
+    """Parse InterProScan JSON results into annotation format."""
+    annotations = []
+    
+    try:
+        if 'results' not in results:
+            return annotations
+        
+        for result in results.get('results', []):
+            matches = result.get('matches', [])
+            
+            for match in matches:
+                signature = match.get('signature', {})
+                entry = signature.get('entry', {})
+                
+                # Get domain name and description
+                if entry:
+                    name = entry.get('name', signature.get('name', 'Unknown'))
+                    description = entry.get('description', signature.get('description', name))
+                    accession = entry.get('accession', signature.get('accession', ''))
+                    entry_type = entry.get('type', 'DOMAIN')
+                else:
+                    name = signature.get('name', 'Unknown')
+                    description = signature.get('description', name)
+                    accession = signature.get('accession', '')
+                    entry_type = 'DOMAIN'
+                
+                # Get database source
+                sig_lib = signature.get('signatureLibraryRelease', {})
+                db_name = sig_lib.get('library', 'InterPro')
+                
+                # Get locations
+                locations = match.get('locations', [])
+                for loc in locations:
+                    start = loc.get('start', 0)
+                    end = loc.get('end', 0)
+                    score = loc.get('score', 0)
+                    evalue = loc.get('evalue', loc.get('score', 0))
+                    
+                    if start > 0 and end > start:
+                        # Determine annotation type
+                        ann_type = 'domain'
+                        entry_type_lower = entry_type.lower() if entry_type else ''
+                        name_lower = name.lower()
+                        
+                        if 'active' in name_lower or 'site' in entry_type_lower:
+                            ann_type = 'active_site'
+                        elif 'binding' in name_lower or 'metal' in name_lower:
+                            ann_type = 'binding_site'
+                        elif 'repeat' in name_lower or 'motif' in entry_type_lower:
+                            ann_type = 'motif'
+                        elif 'family' in entry_type_lower:
+                            ann_type = 'family'
+                        
+                        annotations.append({
+                            'name': name,
+                            'description': description,
+                            'start': start,
+                            'end': end,
+                            'type': ann_type,
+                            'db': db_name,
+                            'accession': accession,
+                            'evalue': evalue,
+                            'score': score
+                        })
+    
+    except Exception as e:
+        print(f"Error parsing InterProScan results: {str(e)}")
+    
+    # Remove duplicates and sort
+    annotations = remove_duplicate_annotations(annotations)
+    annotations.sort(key=lambda x: x['start'])
+    
+    return annotations
+
+
+def parse_hmmer_results(results):
+    """Parse HMMER JSON results into annotation format."""
+    annotations = []
+    
+    try:
+        hits = results.get('results', {}).get('hits', [])
+        
+        for hit in hits:
+            domains = hit.get('domains', [])
+            
+            for domain in domains:
+                annotations.append({
+                    'name': hit.get('name', 'Unknown'),
+                    'description': hit.get('desc', hit.get('name', '')),
+                    'start': domain.get('alisqfrom', domain.get('ienv', 0)),
+                    'end': domain.get('alisqto', domain.get('jenv', 0)),
+                    'type': 'domain',
+                    'db': 'Pfam/HMMER',
+                    'accession': hit.get('acc', ''),
+                    'evalue': domain.get('ievalue', domain.get('cevalue', 0)),
+                    'score': domain.get('bitscore', 0)
+                })
+    
+    except Exception as e:
+        print(f"Error parsing HMMER results: {str(e)}")
+    
+    return annotations
+
+
+def parse_pfam_results(results):
+    """Parse Pfam API results into annotation format."""
+    annotations = []
+    
+    try:
+        for entry in results.get('results', results):
+            if isinstance(entry, dict):
+                metadata = entry.get('metadata', entry)
+                
+                annotations.append({
+                    'name': metadata.get('name', 'Unknown'),
+                    'description': metadata.get('description', ''),
+                    'start': entry.get('start', entry.get('protein_start', 1)),
+                    'end': entry.get('end', entry.get('protein_end', 1)),
+                    'type': 'domain',
+                    'db': 'Pfam',
+                    'accession': metadata.get('accession', ''),
+                    'evalue': entry.get('evalue', 0)
+                })
+    
+    except Exception as e:
+        print(f"Error parsing Pfam results: {str(e)}")
+    
+    return annotations
+
+
+def remove_duplicate_annotations(annotations):
+    """Remove duplicate annotations, keeping best scoring ones."""
+    if not annotations:
+        return []
+    
+    seen = {}
+    for ann in annotations:
+        key = (ann['name'], ann['start'], ann['end'])
+        if key not in seen:
+            seen[key] = ann
+        else:
+            # Keep the one with better e-value
+            if ann.get('evalue', 1) < seen[key].get('evalue', 1):
+                seen[key] = ann
+    
+    return list(seen.values())
 
 
 def search_domains_local(protein_seq):
@@ -312,11 +721,13 @@ def search_domains_local(protein_seq):
                 
                 annotations.append({
                     'name': domain_name,
-                    'description': f'{domain_name} motif/domain',
+                    'description': f'{domain_name} motif/domain (PROSITE-style pattern)',
                     'start': start,
                     'end': end,
                     'evalue': 0.001,
-                    'type': 'motif'
+                    'type': 'motif',
+                    'db': 'Local/PROSITE-patterns',
+                    'accession': 'N/A'
                 })
         except Exception as e:
             continue
@@ -737,100 +1148,78 @@ def create_visualization_static(seq_length, annotations, protein_seq=None, seq_i
     fig.suptitle(f'COMPREHENSIVE PROTEIN ANALYSIS DASHBOARD\nProtein Analysis: {seq_id}', 
                  fontsize=14, fontweight='bold', y=0.98)
     
-    # ===== ROW 2: Domain Architecture =====
+    # ===== ROW 2: Protein Domain Architecture =====
     ax_domain = fig.add_subplot(gs[1, :])
     
-    vis_length = max(seq_length, 100)
-    ax_domain.set_xlim(-vis_length * 0.05, vis_length * 1.05)
-    ax_domain.set_ylim(-0.5, 2.5)
+    vis_length = int(seq_length)  # Ensure integer
+    ax_domain.set_xlim(0, vis_length)
+    ax_domain.set_ylim(-0.8, 1.2)
     
-    # Draw main protein backbone (gradient line)
-    for i in range(vis_length):
-        # Create gradient from purple to green to yellow
-        ratio = i / vis_length
-        if ratio < 0.5:
-            r = 0.5 + ratio
-            g = 0.3 + ratio * 1.4
-            b = 0.8 - ratio * 0.6
-        else:
-            r = 0.8 + (ratio - 0.5) * 0.4
-            g = 1.0
-            b = 0.2
-        ax_domain.plot([i, i+1], [1, 1], color=(r, g, b), linewidth=8, solid_capstyle='butt')
+    # Draw main protein backbone (solid black line)
+    ax_domain.plot([0, vis_length], [0.5, 0.5], color='black', linewidth=10, solid_capstyle='butt', zorder=1)
     
-    # N and C terminus markers
-    circle_n = plt.Circle((-vis_length * 0.02, 1), vis_length * 0.02, color='#e74c3c', zorder=5)
-    ax_domain.add_patch(circle_n)
-    ax_domain.text(-vis_length * 0.02, 1, 'N', ha='center', va='center', fontsize=10, 
-                   fontweight='bold', color='white', zorder=6)
+    # Green triangle marker in center top
+    triangle_x = vis_length / 2
+    triangle = plt.Polygon([[triangle_x - vis_length*0.02, 0.9], 
+                            [triangle_x + vis_length*0.02, 0.9], 
+                            [triangle_x, 1.1]], 
+                           color='#2ecc71', zorder=10)
+    ax_domain.add_patch(triangle)
     
-    circle_c = plt.Circle((vis_length * 1.02, 1), vis_length * 0.02, color='#2ecc71', zorder=5)
-    ax_domain.add_patch(circle_c)
-    ax_domain.text(vis_length * 1.02, 1, 'C', ha='center', va='center', fontsize=10, 
-                   fontweight='bold', color='white', zorder=6)
-    
-    # Domain colors
+    # Domain colors - Blue (#5555FF) and Orange (#FFA500) like your reference
     domain_colors = {
-        'kinase': '#3498db',
-        'sh3': '#2ecc71', 
-        'egf': '#f39c12',
-        'atp': '#e67e22',
-        'binding': '#e67e22',
-        'fibronectin': '#9b59b6',
-        'transmembrane': '#1abc9c',
-        'zinc': '#2ecc71',
-        'signal': '#e74c3c',
-        'nuclear': '#9b59b6',
-        'phosphorylation': '#e74c3c',
-        'glycosylation': '#f39c12',
-        'default': '#3498db'
+        'kinase': '#5555FF',      # Blue
+        'domain': '#5555FF',      # Blue
+        'sh3': '#5555FF',         # Blue
+        'transmembrane': '#5555FF', # Blue
+        'zinc': '#FFA500',        # Orange  
+        'finger': '#FFA500',      # Orange
+        'motif': '#FFA500',       # Orange
+        'binding': '#FFA500',     # Orange
+        'site': '#FFA500',        # Orange
+        'phosphorylation': '#FFA500',  # Orange
+        'glycosylation': '#FFA500',    # Orange
+        'default': '#5555FF'      # Blue default
     }
     
-    # Draw domains
-    y_positions = [1.6, 0.4]  # Alternate above and below line
+    # Draw domains directly on the backbone
     for i, ann in enumerate(annotations):
-        start = ann['start']
-        end = ann['end']
+        start = int(ann['start'])
+        end = int(ann['end'])
         width = end - start
         name = ann['name']
         
-        # Determine color
+        # Determine color based on name
         color = domain_colors['default']
+        name_lower = name.lower()
         for key in domain_colors:
-            if key in name.lower():
+            if key in name_lower:
                 color = domain_colors[key]
                 break
         
-        # Alternate y position
-        y_pos = y_positions[i % 2]
-        
-        # Draw domain box with rounded corners
-        domain_box = patches.FancyBboxPatch((start, y_pos - 0.25), width, 0.5,
-                                             boxstyle="round,pad=0.02,rounding_size=0.1",
+        # Draw domain box on backbone (centered at y=0.5)
+        domain_box = patches.FancyBboxPatch((start, 0.25), width, 0.5,
+                                             boxstyle="round,pad=0.01",
                                              facecolor=color, edgecolor='black', 
                                              linewidth=1.5, zorder=3)
         ax_domain.add_patch(domain_box)
         
-        # Add domain label
-        if width > vis_length * 0.08:
-            ax_domain.text(start + width/2, y_pos, name[:15], ha='center', va='center',
-                          fontsize=7, fontweight='bold', color='white', zorder=4)
-        
-        # Draw connecting line to backbone
-        ax_domain.plot([start + width/2, start + width/2], 
-                      [1, y_pos + (0.25 if y_pos > 1 else -0.25)],
-                      color='gray', linewidth=1, linestyle='--', zorder=1)
+        # Add domain label on box
+        label = name[:20] if len(name) > 20 else name
+        if width > vis_length * 0.05:
+            ax_domain.text(start + width/2, 0.5, label, ha='center', va='center',
+                          fontsize=8, fontweight='bold', color='white', zorder=4)
     
-    # Add position markers
-    tick_interval = max(50, vis_length // 8)
-    for pos in range(0, vis_length + 1, tick_interval):
-        ax_domain.text(pos, -0.3, str(pos), ha='center', va='top', fontsize=8)
-        ax_domain.plot([pos, pos], [0.85, 0.9], color='gray', linewidth=0.5)
-    
-    ax_domain.text(vis_length / 2, -0.45, f'{seq_length} aa', ha='center', va='top', 
-                   fontsize=9, fontweight='bold')
-    ax_domain.axis('off')
-    ax_domain.set_title('Domain Architecture', fontsize=11, fontweight='bold', y=1.02)
+    # Set up x-axis with proper integer ticks
+    ax_domain.set_xlabel('Amino Acid Position', fontsize=10, fontweight='bold')
+    ax_domain.xaxis.set_major_locator(plt.MaxNLocator(integer=True, nbins=8))
+    ax_domain.ticklabel_format(style='plain', axis='x')  # Disable scientific notation
+    ax_domain.tick_params(axis='x', labelsize=9)
+    ax_domain.set_yticks([])
+    ax_domain.spines['top'].set_visible(False)
+    ax_domain.spines['right'].set_visible(False)
+    ax_domain.spines['left'].set_visible(False)
+    ax_domain.set_title('Protein Domain Architecture', fontsize=12, fontweight='bold', pad=10)
     
     # ===== ROW 3: Hydropathy Plot =====
     ax_hydro = fig.add_subplot(gs[2, :])
@@ -905,100 +1294,167 @@ def create_visualization_static(seq_length, annotations, protein_seq=None, seq_i
     return image_base64
 
 def create_visualization_interactive(seq_length, annotations):
-    """Create interactive Plotly visualization and return as JSON."""
+    """Create interactive Plotly visualization with professional domain architecture style."""
     if not annotations:
         return None
     
+    # Ensure seq_length is integer
+    seq_length = int(seq_length)
+    
     fig = go.Figure()
     
-    color_map = {
-        'domain': 'rgb(65, 105, 225)',  # Royal blue
-        'motif': 'rgb(255, 99, 71)',    # Tomato red
-        'active_site': 'rgb(220, 20, 60)',  # Crimson
-        'metal_binding': 'rgb(50, 205, 50)',  # Lime green
-        'other': 'rgb(169, 169, 169)'   # Dark gray
+    # Color scheme - Blue and Orange like reference
+    domain_colors = {
+        'kinase': '#5555FF',
+        'domain': '#5555FF',
+        'sh3': '#5555FF',
+        'transmembrane': '#5555FF',
+        'helix': '#5555FF',
+        'zinc': '#FFA500',
+        'finger': '#FFA500',
+        'motif': '#FFA500',
+        'binding': '#FFA500',
+        'site': '#FFA500',
+        'phosph': '#FFA500',
+        'glyco': '#FFA500',
+        'signal': '#FFA500',
+        'default': '#5555FF'
     }
     
-    y_labels = []
-    y_positions = []
+    # Draw protein backbone (thick black line at y=0.5)
+    fig.add_shape(
+        type="line",
+        x0=0, y0=0.5, x1=seq_length, y1=0.5,
+        line=dict(color="black", width=12),
+    )
     
+    # Add green triangle marker at center
+    center_x = seq_length / 2
+    fig.add_trace(go.Scatter(
+        x=[center_x],
+        y=[1.1],
+        mode='markers',
+        marker=dict(symbol='triangle-up', size=20, color='#2ecc71'),
+        showlegend=False,
+        hoverinfo='skip'
+    ))
+    
+    # Draw domains on the backbone
     for i, ann in enumerate(annotations):
-        y_pos = i + 1
         name = ann['name']
-        start = ann['start']
-        end = ann['end']
+        start = int(ann['start'])
+        end = int(ann['end'])
+        name_lower = name.lower()
         
-        y_labels.append(name)
-        y_positions.append(y_pos)
+        # Determine color - orange for motifs/binding, blue for domains
+        color = domain_colors['default']
+        for key in domain_colors:
+            if key in name_lower:
+                color = domain_colors[key]
+                break
         
-        ann_type = ann.get('type', 'domain')
-        if any(keyword in name.lower() for keyword in ['active', 'site', 'catalytic']):
-            ann_type = 'active_site'
-        elif any(keyword in name.lower() for keyword in ['metal', 'binding', 'zinc']):
-            ann_type = 'metal_binding'
-        elif 'motif' in name.lower():
-            ann_type = 'motif'
-        
-        color = color_map.get(ann_type, color_map['other'])
-        
-        hover_text = (
-            f"<b>{ann['name']}</b><br>"
-            f"Type: {ann_type}<br>"
-            f"Position: {start} - {end}<br>"
-            f"Length: {end - start} aa<br>"
-            f"Source: {ann.get('db', 'N/A')}"
-        )
-        
-        # Add filled rectangle as a shape
+        # Draw domain box on the backbone
         fig.add_shape(
             type="rect",
-            x0=start, y0=y_pos - 0.4,
-            x1=end, y1=y_pos + 0.4,
-            line=dict(color="black", width=2),
+            x0=start, y0=0.2,
+            x1=end, y1=0.8,
+            line=dict(color="black", width=1),
             fillcolor=color,
-            opacity=0.8,
-            layer='below'
+            opacity=0.95,
         )
         
-        # Add invisible scatter trace for hover functionality
+        # Add domain label on the box if wide enough
+        domain_width = end - start
+        if domain_width > seq_length * 0.08:
+            display_name = name[:18] + '..' if len(name) > 18 else name
+            fig.add_annotation(
+                x=(start + end) / 2, y=0.5,
+                text=f"<b>{display_name}</b>",
+                showarrow=False,
+                font=dict(size=10, color="white"),
+            )
+        
+        # Add hover info
+        hover_text = (
+            f"<b>{name}</b><br>"
+            f"Position: {start} - {end}<br>"
+            f"Length: {end - start} aa<br>"
+            f"Database: {ann.get('db', 'N/A')}"
+        )
+        
         fig.add_trace(go.Scatter(
-            x=[start, end, end, start, start],
-            y=[y_pos - 0.4, y_pos - 0.4, y_pos + 0.4, y_pos + 0.4, y_pos - 0.4],
-            fill='toself',
-            fillcolor=color,
-            opacity=0.001,  # Nearly invisible but still hoverable
-            line=dict(width=0),
+            x=[(start + end) / 2],
+            y=[0.5],
+            mode='markers',
+            marker=dict(size=25, color=color, opacity=0),
             text=hover_text,
             hoverinfo='text',
             hoverlabel=dict(bgcolor=color, font=dict(color='white', size=12)),
-            name=name,
-            showlegend=False
+            showlegend=False,
         ))
     
+    # Create legend for domain types
+    unique_colors = []
+    for ann in annotations:
+        name_lower = ann['name'].lower()
+        color = domain_colors['default']
+        for key in domain_colors:
+            if key in name_lower:
+                color = domain_colors[key]
+                break
+        if color not in unique_colors:
+            unique_colors.append(color)
+    
+    if '#5555FF' in unique_colors:
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode='markers',
+            marker=dict(size=15, color='#5555FF', symbol='square'),
+            name="Domain", showlegend=True
+        ))
+    if '#FFA500' in unique_colors:
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode='markers',
+            marker=dict(size=15, color='#FFA500', symbol='square'),
+            name="Motif/Binding Site", showlegend=True
+        ))
+    
+    # Layout
     fig.update_layout(
         title=dict(
-            text='<b>Interactive Domain Visualization</b>',
-            font=dict(size=16, color='#2c3e50')
+            text=f'<b>Protein Domain Architecture</b>',
+            font=dict(size=18, color='#2c3e50'),
+            x=0.5,
         ),
-        xaxis_title="Amino Acid Position",
-        yaxis_title="Domains and Motifs",
-        height=max(400, len(annotations) * 60),
         xaxis=dict(
-            range=[0, seq_length + 50],
+            title="<b>Amino Acid Position</b>",
+            range=[0, seq_length],
             showgrid=True,
-            gridcolor='lightgray',
-            gridwidth=1,
-            zeroline=False
+            gridcolor='rgba(0,0,0,0.1)',
+            zeroline=False,
+            tickfont=dict(size=12),
+            tickformat='d',  # Integer format - no scientific notation
         ),
         yaxis=dict(
-            tickmode='array',
-            tickvals=y_positions,
-            ticktext=y_labels,
-            showgrid=False
+            range=[-0.2, 1.5],
+            showticklabels=False,
+            showgrid=False,
+            zeroline=False,
         ),
+        height=300,
         plot_bgcolor='white',
+        paper_bgcolor='white',
         hovermode='closest',
-        margin=dict(l=150, r=50, t=80, b=80)
+        margin=dict(l=50, r=50, t=80, b=60),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=-0.25,
+            xanchor="center",
+            x=0.5,
+            bgcolor="rgba(255,255,255,0.9)",
+            bordercolor="rgba(0,0,0,0.2)",
+            borderwidth=1,
+        ),
     )
     
     return pio.to_json(fig)
@@ -1016,19 +1472,52 @@ def analyze():
         seq_description = ""
         
         if input_type == 'manual':
-            sequence = request.form.get('sequence', '').strip().upper()
+            sequence = request.form.get('sequence', '').strip()
             seq_type = request.form.get('seq_type', 'protein')
             
             if not sequence:
                 return jsonify({'error': 'No sequence provided'}), 400
             
-            if seq_type == 'protein':
-                valid_aa = set('ACDEFGHIKLMNPQRSTVWY*')
-                if not all(aa in valid_aa for aa in sequence):
-                    return jsonify({'error': 'Invalid amino acid characters in sequence'}), 400
-                protein_seq = sequence.replace('*', '')
+            # Check if it's FASTA format (starts with >)
+            if sequence.startswith('>'):
+                # Parse FASTA format
+                lines = sequence.split('\n')
+                header_line = lines[0][1:].strip()  # Remove '>' and get header
+                
+                # Extract ID and description from header
+                # Format: >ID description or >ID|other|info description
+                header_parts = header_line.split(None, 1)  # Split on first whitespace
+                if header_parts:
+                    seq_id = header_parts[0]
+                    seq_description = header_parts[1] if len(header_parts) > 1 else header_line
+                else:
+                    seq_id = "FASTA_Protein"
+                    seq_description = header_line
+                
+                # Join remaining lines as sequence (skip header)
+                sequence = ''.join(lines[1:])
+                print(f"Parsed FASTA: ID={seq_id}, Description={seq_description[:50]}...")
+            else:
                 seq_id = "Manual_Protein"
                 seq_description = "Manually entered protein sequence"
+            
+            # Clean sequence - remove spaces, newlines, numbers
+            sequence = sequence.upper()
+            sequence = ''.join(c for c in sequence if c.isalpha() or c == '*')
+            
+            if not sequence:
+                return jsonify({'error': 'No valid sequence found after parsing'}), 400
+            
+            if seq_type == 'protein':
+                # Accept standard amino acids plus some common modifications
+                valid_aa = set('ACDEFGHIKLMNPQRSTVWY*XU')
+                invalid_chars = [c for c in sequence if c not in valid_aa]
+                if invalid_chars:
+                    return jsonify({
+                        'error': f'Invalid characters in protein sequence: {", ".join(set(invalid_chars))}. Valid amino acids: A, C, D, E, F, G, H, I, K, L, M, N, P, Q, R, S, T, V, W, Y'
+                    }), 400
+                # Clean the sequence - remove stop codons and unknown residues
+                protein_seq = sequence.replace('*', '').replace('X', '').replace('U', 'C')  # Selenocysteine to Cysteine
             else:
                 valid_bases = set('ACGTN')
                 if not all(base in valid_bases for base in sequence):
@@ -1040,6 +1529,19 @@ def analyze():
                 protein_seq = str(protein_seq)
                 seq_id = "Manual_DNA"
                 seq_description = "Translated from manually entered DNA sequence"
+        
+        elif input_type == 'pdb':
+            # Handle PDB ID input
+            pdb_id = request.form.get('pdb_id', '').strip()
+            if not pdb_id:
+                return jsonify({'error': 'No PDB ID provided'}), 400
+            
+            protein_seq, seq_description, error = fetch_sequence_from_pdb(pdb_id)
+            if error:
+                return jsonify({'error': error}), 400
+            
+            seq_id = f"PDB:{pdb_id.upper()}"
+            print(f"✓ Successfully fetched from PDB: {len(protein_seq)} amino acids")
         
         elif input_type == 'accession':
             accession = request.form.get('accession', '').strip()

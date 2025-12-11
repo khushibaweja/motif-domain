@@ -19,16 +19,11 @@ A web application for analyzing protein sequences to identify domains, motifs, a
   - Individual Amino Acid Composition
 - **Multiple Input Methods**: NCBI Accession, Manual Sequence, FASTA File Upload
 
-## 🚀 Deploy to Vercel
+## 🚀 Deployment
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/khushibaweja/motif-domain)
+This project is deployed on Render: https://motif-domain.onrender.com/
 
-### Quick Deploy Steps:
-
-1. Click the button above OR go to [vercel.com](https://vercel.com)
-2. Import this GitHub repository
-3. Vercel will auto-detect Python and deploy
-4. Your app will be live at `https://motif-domain.vercel.app`
+To run locally, follow the steps below.
 
 ## 📦 Local Installation
 
@@ -65,7 +60,6 @@ motif-domain/
 │   └── index.html      # Web interface
 ├── static/             # Static files
 ├── requirements.txt    # Python dependencies
-├── vercel.json         # Vercel configuration
 └── README.md
 ```
 
@@ -74,8 +68,8 @@ motif-domain/
 - **Backend**: Flask, BioPython
 - **Visualization**: Matplotlib, Plotly
 - **Frontend**: Bootstrap 5
-- **API**: NCBI Entrez E-utilities
-- **Deployment**: Vercel
+- **API**: NCBI Entrez E-utilities, EBI InterProScan, RCSB PDB
+- **Deployment**: Render
 
 ## 👤 Author
 
@@ -84,3 +78,5 @@ motif-domain/
 ---
 
 Made with ❤️ for bioinformatics
+
+© 2025 Khushi Baweja. All rights reserved.

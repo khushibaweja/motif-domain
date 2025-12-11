@@ -6,6 +6,8 @@ A web application for analyzing protein sequences to identify domains, motifs, a
 ![Flask](https://img.shields.io/badge/Flask-2.0+-green.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
+> **Academic Project** | Developed by Khushi Baweja | LPU
+
 ## 🌟 Features
 
 - **NCBI Integration**: Fetch protein sequences directly using NCBI accession numbers
